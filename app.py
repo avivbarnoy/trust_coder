@@ -70,46 +70,68 @@ if page == "1. Protocol Co-Design":
         st.subheader("Current Master Protocol")
         st.text_area("Live Super Prompt", value=st.session_state.super_prompt, height=600)
 
-# --- STAGE 2: RELIABILITY ---
+# --- STAGE 2: RELIABILITY (Updated for Name Display) ---
 elif page == "2. Reliability Test":
     st.header("Stage 2: Inter-Coder Reliability")
-    context = st.text_area("Global Context (News Story/Background):", placeholder="Enter context here...")
+    
+    # 1. Global Context Area
+    st.info("💡 **Tip:** Instead of changing your Master Prompt for every story, paste the story background here. The AI will treat this as 'Context' for its analysis.")
+    context = st.text_area("Global Context (News Story/Background):", placeholder="e.g., 'This article is about a 2024 political rally in London...'")
     
     num_humans = st.radio("Number of Human Coders", [1, 2], horizontal=True)
     
-    # Pre-build dataframe for pasting
-    init_rows = [{"Response": "", "Ranking": 5, "Human 1": "1.1"}] * 10
-    if num_humans == 2:
-        for r in init_rows: r["Human 2"] = "1.1"
+    # FIX: Initialize with the full descriptive name from TRUST_CATS values
+    default_cat_name = TRUST_CATS["1.1"] 
+    init_rows = [{"Response": "", "Ranking": 5, "Human 1": default_cat_name}] * 10
     
-    st.subheader("Paste & Edit Data")
+    if num_humans == 2:
+        for r in init_rows: r["Human 2"] = default_cat_name
+    
+    st.subheader("Coding Table")
+    # Dropdown Options (Display Names)
+    options_list = list(TRUST_CATS.values())
+    
     config = {
-        "Human 1": st.column_config.SelectboxColumn(options=list(TRUST_CATS.keys())),
-        "Human 2": st.column_config.SelectboxColumn(options=list(TRUST_CATS.keys())),
-        "Ranking": st.column_config.NumberColumn(min_value=1, max_value=10)
+        "Human 1": st.column_config.SelectboxColumn("Human 1 Code", options=options_list, required=True),
+        "Human 2": st.column_config.SelectboxColumn("Human 2 Code", options=options_list, required=True),
+        "Ranking": st.column_config.NumberColumn("Trust Rank", min_value=1, max_value=10)
     }
+    
     edited_df = st.data_editor(pd.DataFrame(init_rows), column_config=config, num_rows="dynamic", use_container_width=True)
 
     if st.button("Run Reliability Check"):
         valid_df = edited_df[edited_df["Response"] != ""].copy()
         if not valid_df.empty:
             ai_codes = []
-            for _, row in valid_df.iterrows():
-                p = f"{st.session_state.super_prompt}\nCONTEXT: {context}\nRANKING: {row['Ranking']}\nTEXT: {row['Response']}"
+            
+            # Progress bar for visual feedback
+            progress_bar = st.progress(0)
+            for idx, (_, row) in enumerate(valid_df.iterrows()):
+                # CONTEXT INJECTION: We send the context and the ranking as separate variables
+                p = f"{st.session_state.super_prompt}\n\nCONTEXT: {context}\nRANKING GIVEN BY USER: {row['Ranking']}\nPARTICIPANT TEXT: {row['Response']}"
                 res = call_gemini(p)
+                
+                # Extract numeric code and map back to name
                 m = re.search(r'(\d\.\d)', res)
-                ai_codes.append(m.group(1) if m else "0.0")
+                code_num = m.group(1) if m else "0.0"
+                ai_codes.append(TRUST_CATS.get(code_num, "0.0 Uncodable"))
+                
+                progress_bar.progress((idx + 1) / len(valid_df))
             
             valid_df["AI Code"] = ai_codes
-            st.dataframe(valid_df)
+            st.write("### Comparison Table")
+            st.dataframe(valid_df, use_container_width=True)
             
-            # Reliability Math
-            score = cohen_kappa_score(valid_df["Human 1"], valid_df["AI Code"])
-            st.metric("Agreement (Kappa)", f"{score:.2f}")
+            # Statistics Calculation
+            # Map descriptive names back to numbers for math functions
+            rev_map = {v: k for k, v in TRUST_CATS.items()}
+            stats_df = valid_df.copy()
+            stats_df["Human 1"] = stats_df["Human 1"].map(rev_map)
+            stats_df["AI Code"] = stats_df["AI Code"].map(rev_map)
             
-            if score > 0.7: st.success("Proceed to Stage 3.")
-            else: st.error("Reliability low. Return to Stage 1 to clarify categories.")
-
+            score = cohen_kappa_score(stats_df["Human 1"], stats_df["AI Code"])
+            st.metric("Agreement (Cohen's Kappa)", f"{score:.2f}")
+            
 # --- STAGE 3: BATCH ---
 elif page == "3. Batch Export":
     st.header("Stage 3: Full Batch Processing")
