@@ -1,65 +1,100 @@
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
+import numpy as np
+from sklearn.metrics import cohen_kappa_score
+import krippendorff
+import pyreadstat
+import io
 
-# --- APP CONFIGURATION ---
+# --- CONFIG ---
 st.set_page_config(page_title="Academic AI Coder", layout="wide")
-st.title("🎓 Academic Coding Assistant")
+st.title("🎓 Professional Academic Coding Engine")
 
-# --- SIDEBAR: API KEY ---
+# --- SHARED STATE ---
+if "super_prompt" not in st.session_state:
+    st.session_state.super_prompt = ""
+if "test_results" not in st.session_state:
+    st.session_state.test_results = pd.DataFrame()
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("Setup")
-    api_key = st.text_input("Enter Gemini API Key", type="password")
+    st.header("⚙️ Configuration")
+    api_key = st.text_input("Gemini API Key", type="password")
     if api_key:
         genai.configure(api_key=api_key)
-
-# --- SESSION STATE INITIALIZATION ---
-if "codebook" not in st.session_state:
-    st.session_state.codebook = "No codebook generated yet."
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# --- STAGE 1: CODEBOOK BUILDING ---
-st.header("Stage 1: Framework Training & Codebook Development")
-
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.subheader("Training Chat")
-    st.write("Describe your 9-category Trust Framework (Trustor, Trustee, Context) and provide examples.")
     
-    # Chat Input
-    user_input = st.text_area("Message the AI Assistant:", placeholder="e.g., 'The Trustee categories should focus on Competence, Benevolence, and Integrity...'")
+    st.divider()
+    page = st.radio("Navigate Stages", ["1. Protocol Development", "2. Reliability Test (ICR)", "3. Full Analysis & Export"])
+
+# --- STAGE 1: PROTOCOL ---
+if page == "1. Protocol Development":
+    st.header("Stage 1: Define Coding Protocol")
+    st.write("Paste your 'Super Prompt' or coding protocol below. This defines the categories and rules for the AI.")
     
-    if st.button("Send to AI"):
-        if not api_key:
-            st.error("Please enter your API key in the sidebar.")
-        else:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            # System instructions to keep it academic
-            system_prompt = f"""
-            You are an expert academic researcher. Your goal is to help develop a codebook.
-            Framework: 9 Categories (Trustor, Trustee, Context).
-            Current Codebook: {st.session_state.codebook}
-            User instruction: {user_input}
-            
-            Output a formal codebook including: 
-            1. Category Name 
-            2. Definition 
-            3. Inclusion/Exclusion criteria 
-            4. A prototypical example.
-            """
-            
-            response = model.generate_content(system_prompt)
-            st.session_state.codebook = response.text
-            st.session_state.chat_history.append(("User", user_input))
-            st.session_state.chat_history.append(("AI", response.text))
+    st.session_state.super_prompt = st.text_area(
+        "Current Protocol / Super Prompt", 
+        value=st.session_state.super_prompt,
+        height=400,
+        placeholder="Paste Part 3 (Super Prompt) here..."
+    )
+    
+    if st.button("Save Protocol"):
+        st.success("Protocol saved and loaded into AI memory.")
 
-with col2:
-    st.subheader("Current Draft Codebook")
-    st.markdown(st.session_state.codebook)
+# --- STAGE 2: ICR ---
+elif page == "2. Reliability Test (ICR)":
+    st.header("Stage 2: Inter-Coder Reliability Test")
+    
+    # Input Test Data
+    test_input = st.text_area("Paste sample texts to code (one per line):", height=150)
+    test_items = [t.strip() for t in test_input.split('\n') if t.strip()]
+    
+    if test_items:
+        st.subheader("Human Coding")
+        st.write("Enter the primary numerical code for each item:")
+        
+        human_codes = []
+        for i, item in enumerate(test_items):
+            code = st.text_input(f"Code for: '{item[:60]}...'", key=f"human_{i}")
+            human_codes.append(code)
+            
+        if st.button("Run AI Comparison"):
+            with st.spinner("AI is coding..."):
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                results = []
+                
+                for text in test_items:
+                    # Construct request based on your protocol
+                    prompt = f"{st.session_state.super_prompt}\n\nDATA TO CODE:\n{text}\n\nProduce only the requested table row."
+                    response = model.generate_content(prompt)
+                    # Simple extraction logic (assuming CSV-like or Table output from prompt)
+                    results.append({"text": text, "ai_output": response.text})
+                
+                # Mock analysis of AI output for display
+                # Note: In a real run, we'd use regex to extract the specific 'Primary Code' column
+                st.session_state.test_results = pd.DataFrame(results)
+                st.write("AI Results received. (Statistical calculation would appear here once extraction logic is mapped to your specific table columns).")
 
-# --- PREVIEW OF STAGES 2 & 3 ---
-st.divider()
-st.info("Stage 2 (Reliability Test) and Stage 3 (SPSS Export) will unlock once the codebook is finalized.")
+# --- STAGE 3: EXPORT ---
+elif page == "3. Full Analysis & Export":
+    st.header("Stage 3: SPSS Data Export")
+    
+    if st.button("Download as SPSS (.sav)"):
+        # Dummy data for demonstration
+        df = pd.DataFrame({
+            "Response": ["Example 1", "Example 2"],
+            "Trust_Rank": [8, 3],
+            "Primary_Code": [1.1, 2.1]
+        })
+        
+        # Buffer to save the file
+        buf = io.BytesIO()
+        pyreadstat.write_sav(df, buf)
+        
+        st.download_button(
+            label="Download .sav file",
+            data=buf.getvalue(),
+            file_name="coding_results.sav",
+            mime="application/x-spss-sav"
+        )
