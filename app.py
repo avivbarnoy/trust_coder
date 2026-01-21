@@ -132,31 +132,70 @@ elif page == "2. Reliability Test":
             score = cohen_kappa_score(stats_df["Human 1"], stats_df["AI Code"])
             st.metric("Agreement (Cohen's Kappa)", f"{score:.2f}")
             
-# --- STAGE 3: BATCH ---
+# --- STAGE 3: BATCH EXPORT (Fixed Version) ---
 elif page == "3. Batch Export":
     st.header("Stage 3: Full Batch Processing")
-    context = st.text_area("Context for this Batch:", height=100)
+    context = st.text_area("Context for this specific batch:", height=100)
     
-    # Table for pasting thousands of rows
     batch_init = pd.DataFrame([{"Response": "", "Ranking": 5}] * 20)
     batch_data = st.data_editor(batch_init, num_rows="dynamic", use_container_width=True)
     
-    if st.button("Analyze All Rows"):
+    if st.button("Process & Export to SPSS"):
         rows_to_process = batch_data[batch_data["Response"] != ""].copy()
-        ai_final = []
-        bar = st.progress(0)
         
-        for idx, row in enumerate(rows_to_process.iterrows()):
-            p = f"{st.session_state.super_prompt}\nCONTEXT: {context}\nRANKING: {row[1]['Ranking']}\nTEXT: {row[1]['Response']}"
-            res = call_gemini(p)
-            m = re.search(r'(\d\.\d)', res)
-            ai_final.append(m.group(1) if m else "0.0")
-            bar.progress((idx + 1) / len(rows_to_process))
-        
-        rows_to_process["AI_Code"] = ai_final
-        rows_to_process["Context"] = context
-        
-        # SPSS Export
-        buf = io.BytesIO()
-        pyreadstat.write_sav(rows_to_process, buf)
-        st.download_button("Download SPSS (.sav)", data=buf.getvalue(), file_name="final_results.sav")
+        if rows_to_process.empty:
+            st.warning("Please paste some data first!")
+        else:
+            ai_final_codes = []
+            bar = st.progress(0)
+            
+            # 1. Run AI Analysis
+            for idx, (_, row) in enumerate(rows_to_process.iterrows()):
+                p = f"{st.session_state.super_prompt}\nCONTEXT: {context}\nRANKING: {row['Ranking']}\nTEXT: {row['Response']}"
+                res = call_gemini(p)
+                m = re.search(r'(\d\.\d)', res)
+                code_num = m.group(1) if m else "0.0"
+                ai_final_codes.append(code_num)
+                bar.progress((idx + 1) / len(rows_to_process))
+            
+            # 2. Prepare DataFrame
+            rows_to_process["AI_Code_Num"] = pd.to_numeric(ai_final_codes, errors='coerce')
+            rows_to_process["AI_Code_Label"] = [TRUST_CATS.get(c, "Unknown") for c in ai_final_codes]
+            rows_to_process["Context_Label"] = context
+            
+            # 3. Secure SPSS Export (The Fix)
+            import tempfile
+            import os
+            
+            # Create a temporary file path
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".sav") as tmp:
+                temp_path = tmp.name
+            
+            try:
+                # Define SPSS metadata
+                labels = {
+                    "Response": "Participant Justification",
+                    "Ranking": "Trust Ranking (1-10)",
+                    "AI_Code_Num": "Numerical Code (AI)",
+                    "AI_Code_Label": "Category Name (AI)",
+                    "Context_Label": "Research Context/Story"
+                }
+                
+                # Write to the real temporary path
+                pyreadstat.write_sav(rows_to_process, temp_path, column_labels=labels)
+                
+                # Read the file back into bytes for the download button
+                with open(temp_path, "rb") as f:
+                    sav_bytes = f.read()
+                
+                st.success("Batch Complete! Your SPSS file is ready.")
+                st.download_button(
+                    label="📥 Download Final SPSS File (.sav)",
+                    data=sav_bytes,
+                    file_name="trust_analysis_results.sav",
+                    mime="application/x-spss-sav"
+                )
+            finally:
+                # Clean up: Delete the temporary file from the server
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
