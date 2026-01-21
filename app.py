@@ -73,7 +73,7 @@ if page == "2. Reliability Test (ICR)":
 
         if st.button("Finalize & Run AI Comparison"):
             with st.spinner("AI is analyzing based on your protocol..."):
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                model = genai.GenerativeModel('gemini-3-pro-preview')
                 ai_selections = []
                 explanations = []
 
